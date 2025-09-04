@@ -23,7 +23,7 @@ const client = new Client({
   partials: [Partials.Channel]
 });
 
-const ticketMap = new Map(); // userId -> { channelId, status, logs }
+const ticketMap = new Map(); // userId -> { channelId, status, logs, type }
 
 // Utility
 const now = () => new Date().toLocaleString("nl-NL", { dateStyle: "short", timeStyle: "short" });
@@ -107,7 +107,10 @@ client.on("interactionCreate", async interaction => {
   try {
     const embed = new EmbedBuilder()
       .setTitle("🏷️ BEVESTIG UW TICKET!")
-      .setDescription(`Bent u zeker dat **${type}** het onderwerp is waarover u een ticket wilt openen?\n\nPowered by ZBRP ⚡•${now()}`)
+      .setDescription(
+        `Bent u zeker dat **${type}** het onderwerp is waarover u een ticket wilt openen?\n\n` +
+        `Powered by ZBRP ⚡•${now()}`
+      )
       .setColor("Blue");
 
     const row = new ActionRowBuilder().addComponents(
@@ -129,13 +132,17 @@ client.on("interactionCreate", async interaction => {
   const ticket = ticketMap.get(userId);
   if (!ticket) return;
 
-  const guild = client.guilds.cache.first(); // pak je hoofdserver
-  const staffRoleId = "STAFF_ROLE_ID";
-  const categoryId = "TICKET_CATEGORY_ID";
+  // IDs van jouw server
+  const guild = await client.guilds.fetch("1391369587697913927");
+  const staffRoleId = "1413273783745118252";
+  const categoryId = "1413273557093318748";
 
   if (interaction.customId === "ticket_cancel") {
     ticketMap.delete(userId);
-    return interaction.update({ embeds: [new EmbedBuilder().setDescription("❌ Ticket geannuleerd.").setColor("Red")], components: [] });
+    return interaction.update({
+      embeds: [new EmbedBuilder().setDescription("❌ Ticket geannuleerd.").setColor("Red")],
+      components: []
+    });
   }
 
   if (interaction.customId === "ticket_confirm") {
@@ -155,10 +162,16 @@ client.on("interactionCreate", async interaction => {
 
     const embed = new EmbedBuilder()
       .setTitle("🎟️ TICKET GEOPEND!")
-      .setDescription(`Hey ${interaction.user},\n\nBedankt voor uw **${ticket.type}** ticket. Onze medewerkers zijn op de hoogte gebracht en zullen binnenkort reageren.\n\nPowered by ZBRP ⚡•${now()}`)
+      .setDescription(
+        `Hey ${interaction.user},\n\n` +
+        `Bedankt voor uw **${ticket.type}** ticket. Onze medewerkers zijn op de hoogte gebracht en zullen binnenkort reageren.\n\n` +
+        `Powered by ZBRP ⚡•${now()}`
+      )
       .setColor("Blue");
 
     await interaction.update({ embeds: [embed], components: [] });
     await ticketChannel.send(`📩 Nieuw **${ticket.type}** ticket van ${interaction.user.tag}`);
   }
 });
+
+client.login(process.env.DISCORD_TOKEN);
