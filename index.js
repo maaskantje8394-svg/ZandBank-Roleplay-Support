@@ -1,4 +1,16 @@
-const { Client, GatewayIntentBits, Partials, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, SlashCommandBuilder, REST, Routes } = require("discord.js");
+const {
+  Client,
+  GatewayIntentBits,
+  Partials,
+  EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  SlashCommandBuilder,
+  REST,
+  Routes,
+  PermissionsBitField
+} = require("discord.js");
 require("dotenv").config();
 
 const client = new Client({
@@ -11,23 +23,23 @@ const client = new Client({
   partials: [Partials.Channel]
 });
 
-// Presence + login
+const ticketMap = new Map(); 
+// Map: userId -> channelId
+
+// Presence
 client.once("ready", () => {
   console.log(`✅ ${client.user.tag} is online`);
-
   client.user.setPresence({
-    activities: [
-      { name: "Zandbank Roleplay Support Dm mij voor hulp.",type: 0 }
-    ],
+    activities: [{ name: "ZandBank Roleplay Support", type: 3 }],
     status: "online"
   });
 });
 
-// Register slash command (/botclaim)
+// Slash command
 const commands = [
   new SlashCommandBuilder()
     .setName("botclaim")
-    .setDescription("Stuur het ticket paneel naar een gekozen kanaal")
+    .setDescription("Stuur het ticketpaneel naar een gekozen kanaal")
     .addChannelOption(option =>
       option.setName("kanaal")
         .setDescription("Kanaal waar het ticketpaneel komt")
@@ -49,58 +61,98 @@ client.on("ready", async () => {
   }
 });
 
-// Command handler
+// /botclaim handler
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
+  if (interaction.commandName !== "botclaim") return;
 
-  if (interaction.commandName === "botclaim") {
-    const channel = interaction.options.getChannel("kanaal");
+  const channel = interaction.options.getChannel("kanaal");
 
-    const embed = new EmbedBuilder()
-      .setTitle("📩 Zandbank Roleplay – Ticket Creating")
-      .setDescription(
-        "Ticket Regels:\n" +
-        "● Maak geen klachten zonder bewijs.\n" +
-        "● Lees eerst de FAQ voor je opent.\n" +
-        "● Geen staffleden taggen.\n" +
-        "● Geen misbruik van tickets.\n" +
-        "● Status: Blauw = Altijd Open, Groen = Tijdelijk Open, Rood = Gesloten."
-      )
-      .setColor("Blue");
+  const embed = new EmbedBuilder()
+    .setTitle("📩 Groningen Roleplay – Ticket Systeem")
+    .setDescription(
+      "Klik hieronder om een ticket te openen.\n\n" +
+      "Je gesprek zal via **DM** verlopen. Staff kan je daar helpen!"
+    )
+    .setColor("Blue");
 
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId("general_support")
-        .setLabel("General-Support")
-        .setStyle(ButtonStyle.Primary),
-      new ButtonBuilder()
-        .setCustomId("player_report")
-        .setLabel("Player-Report")
-        .setStyle(ButtonStyle.Success),
-      new ButtonBuilder()
-        .setCustomId("staff_complaint")
-        .setLabel("Staff Complaint")
-        .setStyle(ButtonStyle.Danger)
-    );
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("open_ticket")
+      .setLabel("Open Ticket")
+      .setStyle(ButtonStyle.Primary)
+  );
 
-    await channel.send({ embeds: [embed], components: [row] });
-    await interaction.reply({ content: `✅ Ticket paneel verstuurd naar ${channel}`, ephemeral: true });
+  await channel.send({ embeds: [embed], components: [row] });
+  await interaction.reply({ content: `✅ Ticketpaneel verstuurd naar ${channel}`, ephemeral: true });
+});
+
+// Ticket openen via knop
+client.on("interactionCreate", async interaction => {
+  if (!interaction.isButton()) return;
+  if (interaction.customId !== "open_ticket") return;
+
+  const guild = interaction.guild;
+  const member = interaction.member;
+  const categoryId = "TICKET_CATEGORY_ID"; // <-- ID van je ticket categorie
+  const staffRoleId = "STAFF_ROLE_ID"; // <-- ID van staff rol
+
+  // Check of user al een ticket heeft
+  if (ticketMap.has(member.id)) {
+    return interaction.reply({ content: "❌ Je hebt al een open ticket in je DM!", ephemeral: true });
+  }
+
+  // Maak ticketkanaal
+  const ticketChannel = await guild.channels.create({
+    name: `ticket-${member.user.username}`,
+    type: 0,
+    parent: categoryId,
+    permissionOverwrites: [
+      { id: guild.id, deny: [PermissionsBitField.Flags.ViewChannel] },
+      { id: member.id, deny: [PermissionsBitField.Flags.ViewChannel] }, // user mag kanaal niet zien
+      { id: staffRoleId, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] }
+    ]
+  });
+
+  ticketMap.set(member.id, ticketChannel.id);
+
+  await interaction.reply({ content: `✅ Ticket aangemaakt. Check je DM!`, ephemeral: true });
+
+  // DM naar gebruiker
+  try {
+    await member.send("📩 Je hebt een ticket geopend! Typ hier je bericht, de staff zal via dit gesprek reageren.");
+  } catch {
+    await ticketChannel.send(`⚠️ Kon geen DM sturen naar <@${member.id}>.`);
   }
 });
 
-// Button handler (test output)
-client.on("interactionCreate", async interaction => {
-  if (!interaction.isButton()) return;
+// Relay systeem: DM -> ticketkanaal
+client.on("messageCreate", async message => {
+  if (message.channel.type !== 1) return; // alleen DM's
+  if (message.author.bot) return;
 
-  if (interaction.customId === "general_support") {
-    await interaction.reply({ content: "📩 Je koos **General Support** (dit is een test).", ephemeral: true });
-  }
-  if (interaction.customId === "player_report") {
-    await interaction.reply({ content: "📩 Je koos **Player Report** (dit is een test).", ephemeral: true });
-  }
-  if (interaction.customId === "staff_complaint") {
-    await interaction.reply({ content: "📩 Je koos **Staff Complaint** (dit is een test).", ephemeral: true });
-  }
+  const ticketChannelId = ticketMap.get(message.author.id);
+  if (!ticketChannelId) return;
+
+  const ticketChannel = await client.channels.fetch(ticketChannelId);
+  if (!ticketChannel) return;
+
+  await ticketChannel.send(`**${message.author.username}**: ${message.content}`);
+});
+
+// Relay systeem: ticketkanaal -> DM
+client.on("messageCreate", async message => {
+  if (message.author.bot) return;
+  if (!message.guild) return; // alleen in server
+
+  const userId = [...ticketMap.entries()]
+    .find(([, channelId]) => channelId === message.channel.id)?.[0];
+  if (!userId) return;
+
+  const user = await client.users.fetch(userId);
+  if (!user) return;
+
+  await user.send(`[WERKNEMER] **${message.author.username}**: ${message.content}`);
 });
 
 client.login(process.env.DISCORD_TOKEN);
