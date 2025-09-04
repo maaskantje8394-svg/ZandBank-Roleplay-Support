@@ -17,7 +17,7 @@ client.once("ready", () => {
 
   client.user.setPresence({
     activities: [
-      { name: "Zandbank Roleplay Support | /botclaim", type: 0 }
+      { name: "Zandbank Roleplay Support Dm mij voor hulp.",type: 0 }
     ],
     status: "online"
   });
