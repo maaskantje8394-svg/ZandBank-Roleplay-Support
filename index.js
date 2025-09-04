@@ -23,8 +23,10 @@ const client = new Client({
   partials: [Partials.Channel]
 });
 
-// Ticket koppelingen (userId -> channelId)
-const ticketMap = new Map();
+const ticketMap = new Map(); // userId -> { channelId, status, logs }
+
+// Utility
+const now = () => new Date().toLocaleString("nl-NL", { dateStyle: "short", timeStyle: "short" });
 
 // Presence
 client.once("ready", () => {
@@ -35,7 +37,7 @@ client.once("ready", () => {
   });
 });
 
-// Slash command (/botclaim)
+// Slash command
 const commands = [
   new SlashCommandBuilder()
     .setName("botclaim")
@@ -51,17 +53,14 @@ const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
 
 client.on("ready", async () => {
   try {
-    await rest.put(
-      Routes.applicationCommands(client.user.id),
-      { body: commands }
-    );
+    await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
     console.log("✅ Slash command /botclaim geregistreerd");
   } catch (error) {
     console.error(error);
   }
 });
 
-// /botclaim handler
+// /botclaim → ticketpaneel in server
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
   if (interaction.commandName !== "botclaim") return;
@@ -69,103 +68,97 @@ client.on("interactionCreate", async interaction => {
   const channel = interaction.options.getChannel("kanaal");
 
   const embed = new EmbedBuilder()
-    .setTitle("📩 Groningen Roleplay – Ticket Systeem")
+    .setTitle("📩 Zandbank Roleplay - Ticket Creating")
     .setDescription(
-      "Maak hieronder een keuze om een gesprek te starten via DM met ons supportteam.\n\n" +
-      "🔴 **Klachten**\n🟢 **Vragen**\n🔵 **Partnership**"
+      "Ticket Regels:\n\n" +
+      "● Maak geen klachtenticket zonder bewijs.\n" +
+      "● Lees eerst de FAQ voordat je een ticket opent.\n" +
+      "● Noem of tag geen staffleden in je ticket.\n" +
+      "● Maak geen tickets voor de grap of misbruik.\n" +
+      "● Je kunt in het ticketsysteem zien hoelang het gemiddeld duurt voor er een reactie komt."
     )
-    .setColor("Blue");
+    .setColor("Yellow");
 
   const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId("ticket_klacht")
-      .setLabel("Klacht")
-      .setStyle(ButtonStyle.Danger),
-    new ButtonBuilder()
-      .setCustomId("ticket_vraag")
-      .setLabel("Vraag")
-      .setStyle(ButtonStyle.Success),
-    new ButtonBuilder()
-      .setCustomId("ticket_partner")
-      .setLabel("Partnership")
-      .setStyle(ButtonStyle.Primary)
+    new ButtonBuilder().setCustomId("ticket_klacht").setLabel("Klacht").setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId("ticket_vraag").setLabel("Vraag").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId("ticket_partner").setLabel("Partnership").setStyle(ButtonStyle.Primary)
   );
 
   await channel.send({ embeds: [embed], components: [row] });
   await interaction.reply({ content: `✅ Ticketpaneel verstuurd naar ${channel}`, ephemeral: true });
 });
 
-// Ticket openen via knop
+// Ticket start → DM bevestiging
 client.on("interactionCreate", async interaction => {
   if (!interaction.isButton()) return;
 
-  const guild = interaction.guild;
   const member = interaction.member;
-  const staffRoleId = "1413273783745118252";     // <--- vervang met staff rol id
-  const categoryId = "1413273557093318748"; // <--- vervang met categorie id
-
   let type = "";
-  if (interaction.customId === "ticket_klacht") type = "klacht";
-  if (interaction.customId === "ticket_vraag") type = "vraag";
-  if (interaction.customId === "ticket_partner") type = "partner";
-
+  if (interaction.customId === "ticket_klacht") type = "Klacht";
+  if (interaction.customId === "ticket_vraag") type = "Vraag";
+  if (interaction.customId === "ticket_partner") type = "Partnership";
   if (!type) return;
 
-  // Check of user al ticket heeft
-  if (ticketMap.has(member.id)) {
-    return interaction.reply({ content: "❌ Je hebt al een open ticket in je DM!", ephemeral: true });
-  }
+  // Ticket in map
+  ticketMap.set(member.id, { status: "pending", type, logs: [] });
 
-  // Maak ticketkanaal
-  const ticketChannel = await guild.channels.create({
-    name: `ticket-${type}-${member.user.username}`,
-    type: 0,
-    parent: categoryId,
-    permissionOverwrites: [
-      { id: guild.id, deny: [PermissionsBitField.Flags.ViewChannel] },
-      { id: staffRoleId, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] }
-    ]
-  });
-
-  ticketMap.set(member.id, ticketChannel.id);
-
-  await interaction.reply({ content: `✅ Ticket (${type}) aangemaakt. Check je DM!`, ephemeral: true });
-
-  // DM sturen
+  // DM met bevestiging
   try {
-    await member.send(`📩 Je hebt een **${type}-ticket** geopend! Typ hier je bericht, het staffteam zal reageren.`);
+    const embed = new EmbedBuilder()
+      .setTitle("🏷️ BEVESTIG UW TICKET!")
+      .setDescription(`Bent u zeker dat **${type}** het onderwerp is waarover u een ticket wilt openen?\n\nPowered by ZBRP ⚡•${now()}`)
+      .setColor("Blue");
+
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("ticket_cancel").setLabel("❌ Annuleren").setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId("ticket_confirm").setLabel("✅ Bevestigen").setStyle(ButtonStyle.Success)
+    );
+
+    await member.send({ embeds: [embed], components: [row] });
+    await interaction.reply({ content: "✅ Check je DM om je ticket te bevestigen!", ephemeral: true });
   } catch {
-    await ticketChannel.send(`⚠️ Kon geen DM sturen naar <@${member.id}>.`);
+    await interaction.reply({ content: "⚠️ Kon geen DM sturen, zorg dat je DM’s open staan.", ephemeral: true });
   }
 });
 
-// Relay: DM -> ticketkanaal
-client.on("messageCreate", async message => {
-  if (message.channel.type !== 1) return; // alleen DM
-  if (message.author.bot) return;
+// DM bevestiging → open ticket
+client.on("interactionCreate", async interaction => {
+  if (!interaction.isButton()) return;
+  const userId = interaction.user.id;
+  const ticket = ticketMap.get(userId);
+  if (!ticket) return;
 
-  const ticketChannelId = ticketMap.get(message.author.id);
-  if (!ticketChannelId) return;
+  const guild = client.guilds.cache.first(); // pak je hoofdserver
+  const staffRoleId = "STAFF_ROLE_ID";
+  const categoryId = "TICKET_CATEGORY_ID";
 
-  const ticketChannel = await client.channels.fetch(ticketChannelId);
-  if (!ticketChannel) return;
+  if (interaction.customId === "ticket_cancel") {
+    ticketMap.delete(userId);
+    return interaction.update({ embeds: [new EmbedBuilder().setDescription("❌ Ticket geannuleerd.").setColor("Red")], components: [] });
+  }
 
-  await ticketChannel.send(`**${message.author.username}**: ${message.content}`);
+  if (interaction.customId === "ticket_confirm") {
+    // Maak server kanaal
+    const ticketChannel = await guild.channels.create({
+      name: `ticket-${ticket.type.toLowerCase()}-${interaction.user.username}`,
+      type: 0,
+      parent: categoryId,
+      permissionOverwrites: [
+        { id: guild.id, deny: [PermissionsBitField.Flags.ViewChannel] },
+        { id: staffRoleId, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] }
+      ]
+    });
+
+    ticket.channelId = ticketChannel.id;
+    ticket.status = "open";
+
+    const embed = new EmbedBuilder()
+      .setTitle("🎟️ TICKET GEOPEND!")
+      .setDescription(`Hey ${interaction.user},\n\nBedankt voor uw **${ticket.type}** ticket. Onze medewerkers zijn op de hoogte gebracht en zullen binnenkort reageren.\n\nPowered by ZBRP ⚡•${now()}`)
+      .setColor("Blue");
+
+    await interaction.update({ embeds: [embed], components: [] });
+    await ticketChannel.send(`📩 Nieuw **${ticket.type}** ticket van ${interaction.user.tag}`);
+  }
 });
-
-// Relay: ticketkanaal -> DM
-client.on("messageCreate", async message => {
-  if (message.author.bot) return;
-  if (!message.guild) return; // alleen in server
-
-  const userId = [...ticketMap.entries()]
-    .find(([, channelId]) => channelId === message.channel.id)?.[0];
-  if (!userId) return;
-
-  const user = await client.users.fetch(userId);
-  if (!user) return;
-
-  await user.send(`[WERKNEMER] **${message.author.username}**: ${message.content}`);
-});
-
-client.login(process.env.DISCORD_TOKEN);
