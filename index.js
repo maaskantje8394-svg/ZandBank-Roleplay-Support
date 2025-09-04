@@ -9,7 +9,8 @@ const {
   SlashCommandBuilder,
   REST,
   Routes,
-  PermissionsBitField
+  PermissionsBitField,
+  AttachmentBuilder
 } = require("discord.js");
 require("dotenv").config();
 
@@ -23,7 +24,7 @@ const client = new Client({
   partials: [Partials.Channel]
 });
 
-const ticketMap = new Map(); // userId -> { channelId, status, logs, type }
+const ticketMap = new Map(); // userId -> { channelId, status, logs, type, staff }
 
 // Utility
 const now = () => new Date().toLocaleString("nl-NL", { dateStyle: "short", timeStyle: "short" });
@@ -160,6 +161,11 @@ client.on("interactionCreate", async interaction => {
     ticket.channelId = ticketChannel.id;
     ticket.status = "open";
 
+    const claimRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`ticket_claim_${userId}`).setLabel("Claim").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId(`ticket_close_${userId}`).setLabel("Sluiten").setStyle(ButtonStyle.Danger)
+    );
+
     const embed = new EmbedBuilder()
       .setTitle("🎟️ TICKET GEOPEND!")
       .setDescription(
@@ -170,7 +176,105 @@ client.on("interactionCreate", async interaction => {
       .setColor("Blue");
 
     await interaction.update({ embeds: [embed], components: [] });
-    await ticketChannel.send(`📩 Nieuw **${ticket.type}** ticket van ${interaction.user.tag}`);
+    await ticketChannel.send({ content: `📩 Nieuw **${ticket.type}** ticket van ${interaction.user.tag}`, components: [claimRow] });
+  }
+});
+
+// Claim en close knoppen
+client.on("interactionCreate", async interaction => {
+  if (!interaction.isButton()) return;
+
+  // claim
+  if (interaction.customId.startsWith("ticket_claim_")) {
+    const userId = interaction.customId.split("_")[2];
+    const ticket = ticketMap.get(userId);
+    if (!ticket) return interaction.reply({ content: "⚠️ Ticket niet gevonden.", ephemeral: true });
+
+    ticket.staff = interaction.user.username;
+    ticket.status = "claimed";
+
+    const embed = new EmbedBuilder()
+      .setTitle("👤 TICKET IN BEHANDELING!")
+      .setDescription(
+        `Hey <@${userId}>,\n\n` +
+        `De medewerker **${interaction.user.username}** is toegewezen tot uw ticket en zal binnenkort reageren.\n\n` +
+        `Powered by ZBRP ⚡•${now()}`
+      )
+      .setColor("Blue");
+
+    try {
+      const user = await client.users.fetch(userId);
+      await user.send({ embeds: [embed] });
+    } catch {}
+
+    await interaction.reply({ content: `✅ Ticket geclaimd door ${interaction.user.username}.`, ephemeral: true });
+  }
+
+  // close
+  if (interaction.customId.startsWith("ticket_close_")) {
+    const userId = interaction.customId.split("_")[2];
+    const ticket = ticketMap.get(userId);
+    if (!ticket) return interaction.reply({ content: "⚠️ Ticket niet gevonden.", ephemeral: true });
+
+    ticket.status = "closed";
+
+    // maak logbestand
+    const logText = ticket.logs.join("\n") || "Geen berichten gelogd.";
+    const attachment = new AttachmentBuilder(Buffer.from(logText, "utf-8"), { name: "ticket-log.txt" });
+
+    const embed = new EmbedBuilder()
+      .setTitle("📨 TICKET GESLOTEN!")
+      .setDescription(
+        `Hey <@${userId}>,\n\n` +
+        `Onze medewerkers hebben uw verzoek als opgelost gemarkeerd en uw ticket gesloten.\n\n` +
+        `Heeft u nog vragen? Open gerust een nieuw ticket.\n\n` +
+        `Bedankt voor uw bericht.\n\n` +
+        `Mvg,\nGRP Support-team\n\n` +
+        `ℹ️ Waarschuwing\nAls u op dit bericht reageert, wordt een nieuw ondersteuningsverzoek geopend.\n\n` +
+        `📑 Ticket-logboek is bijgevoegd.\n\n` +
+        `Powered by ZBRP ⚡•${now()}`
+      )
+      .setColor("Blue");
+
+    try {
+      const user = await client.users.fetch(userId);
+      await user.send({ embeds: [embed], files: [attachment] });
+    } catch {}
+
+    const channel = await client.channels.fetch(ticket.channelId);
+    if (channel) await channel.delete().catch(() => null);
+
+    ticketMap.delete(userId);
+    await interaction.reply({ content: "✅ Ticket gesloten.", ephemeral: true });
+  }
+});
+
+// Chat bridge
+client.on("messageCreate", async message => {
+  if (message.author.bot) return;
+
+  // staff → user
+  const ticket = [...ticketMap.values()].find(t => t.channelId === message.channel.id);
+  if (ticket) {
+    const user = await client.users.fetch([...ticketMap.entries()].find(([id, t]) => t.channelId === message.channel.id)[0]);
+    const content = `> [WERKNEMER] **${message.author.username}**: ${message.content}`;
+    ticket.logs.push(content);
+    try {
+      await user.send(content);
+    } catch {}
+  }
+
+  // user → staff
+  if (message.channel.type === 1) { // DM
+    const ticket = ticketMap.get(message.author.id);
+    if (ticket && ticket.status !== "closed") {
+      const channel = await client.channels.fetch(ticket.channelId);
+      if (channel) {
+        const content = `> [USER] **${message.author.username}**: ${message.content}`;
+        ticket.logs.push(content);
+        await channel.send(content);
+      }
+    }
   }
 });
 
