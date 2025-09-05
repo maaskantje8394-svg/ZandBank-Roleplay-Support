@@ -161,11 +161,13 @@ client.on("interactionCreate", async interaction => {
     ticket.channelId = ticketChannel.id;
     ticket.status = "open";
 
+    // knoppen
     const claimRow = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`ticket_claim_${userId}`).setLabel("Claim").setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId(`ticket_close_${userId}`).setLabel("Sluiten").setStyle(ButtonStyle.Danger)
     );
 
+    // embed voor gebruiker
     const embed = new EmbedBuilder()
       .setTitle("🎟️ TICKET GEOPEND!")
       .setDescription(
@@ -176,7 +178,10 @@ client.on("interactionCreate", async interaction => {
       .setColor("Blue");
 
     await interaction.update({ embeds: [embed], components: [] });
-    await ticketChannel.send({ content: `📩 Nieuw **${ticket.type}** ticket van ${interaction.user.tag}`, components: [claimRow] });
+    await ticketChannel.send({
+      content: `📩 Nieuw **${ticket.type}** ticket van ${interaction.user.tag}`,
+      components: [claimRow]
+    });
   }
 });
 
@@ -202,12 +207,21 @@ client.on("interactionCreate", async interaction => {
       )
       .setColor("Blue");
 
+    // update user
     try {
       const user = await client.users.fetch(userId);
       await user.send({ embeds: [embed] });
     } catch {}
 
-    await interaction.reply({ content: `✅ Ticket geclaimd door ${interaction.user.username}.`, ephemeral: true });
+    // knoppen updaten → alleen sluiten over
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`ticket_close_${userId}`).setLabel("Sluiten").setStyle(ButtonStyle.Danger)
+    );
+    await interaction.message.edit({ components: [row] });
+
+    // bericht in kanaal
+    await interaction.channel.send(`✅ Dit ticket is geclaimd door **${interaction.user.username}**`);
+    await interaction.reply({ content: "Je hebt dit ticket succesvol geclaimd.", ephemeral: true });
   }
 
   // close
